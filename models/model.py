@@ -12,6 +12,7 @@ from torchvision.models.detection import FasterRCNN
 from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor
 from torchvision.models.detection.roi_heads import paste_masks_in_image
 from .SamEncoderViT import ImageEncoderViT
+from .common import SimpleFPN
 from functools import partial
 
 from typing import List, Tuple, Dict
@@ -99,7 +100,8 @@ class Detev(MaskRCNN):
                    box_detector=None,
                    mask_detector=None,
                    img_size =1024,
-                   num_classes=2):
+                   num_classes=2,
+                   multi_scale=False):
             
 
             backbone = ImageEncoderViT(depth=12,
@@ -116,9 +118,18 @@ class Detev(MaskRCNN):
                                     out_chans=256,)
             backbone.out_channels = 256
             backbone.init_weights(backbone_pretrained)
+            
             # self.img_size = img_size
             super().__init__(backbone=backbone, num_classes=num_classes)
             # self.backbone = backbone
+            self.multi_scale = multi_scale
+            if self.multi_scale:
+                self.backbone_out_indices = [5, 8, 11]
+                self.fpn = SimpleFPN(in_channels=[768, 768, 768],
+                                    out_channels=256,
+                                    use_residual=True,
+                                    num_outs=3,
+                                    )
             self.transform = None
             anchor_sizes = ((64,))
             aspect_ratios = ((0.5, 1.0, 2.0),) * len(anchor_sizes)
@@ -183,7 +194,7 @@ class Detev(MaskRCNN):
 
         # Check for degenerate boxes
         # TODO: Move this to a function
-        if targets is not None:
+        if targets is not None and self.training:
             for target_idx, target in enumerate(targets):
                 boxes = target["boxes"]
                 degenerate_boxes = boxes[:, 2:] <= boxes[:, :2]
@@ -196,8 +207,11 @@ class Detev(MaskRCNN):
                         "All bounding boxes should have positive height and width."
                         f" Found invalid box {degen_bb} for target at index {target_idx}.",
                     )
-
-        features = self.backbone(images.tensors)  #.tensors
+        if self.multi_scale:
+            features = self.backbone.forward_base_multi_level(images.tensors, self.backbone_out_indices)  #.tensors
+            features = self.fpn(features)
+        else:
+            features = self.backbone(images.tensors)
         if isinstance(features, torch.Tensor):
             features = OrderedDict([("0", features)])
         proposals, proposal_losses = self.rpn(images, features, targets)

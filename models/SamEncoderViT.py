@@ -149,6 +149,18 @@ class ImageEncoderViT(nn.Module):
 
         return x
 
+    def forward_base_multi_level(self, x: torch.Tensor, out_indices) -> torch.Tensor:
+        x = self.patch_embed(x)
+        if self.pos_embed is not None:
+            x = x + self.pos_embed
+        features_list = []
+        for i, blk in enumerate(self.blocks):
+            x = blk(x)
+            if i in out_indices:
+                features_list.append(x.permute(0, 3, 1, 2))
+
+        return features_list
+
 
 class Block(nn.Module):
     """Transformer blocks with support of window attention and residual propagation blocks"""
